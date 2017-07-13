@@ -90,7 +90,7 @@ LIMIT 1'''
         query = '''
 SELECT * FROM tests
 WHERE status == ?
-ORDER BY board, tree, branch, version, config
+ORDER BY board, tree, branch, version, config, published DESC
 '''
         failed = list()
         for t in self.__c.execute(query, (status,)):
