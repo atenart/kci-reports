@@ -1,0 +1,156 @@
+#!/usr/bin/python3
+# -*- coding:utf-8 -*
+#
+# Copyright (C) 2017 Antoine Tenart <antoine.tenart@free-electrons.com>
+#
+# This file is licensed under the terms of the GNU General Public
+# License version 2. This program is licensed "as is" without any
+# warranty of any kind, whether express or implied.
+
+'''KCI reports
+
+Usage:
+  kci fetch [--conf=<path>]
+  kci render [--conf=<path>]
+
+Options:
+  -h --help             Show this screen.
+  --conf=<path>         Configuration file to use [Default: config].
+'''
+
+from datetime import datetime
+import dateutil.parser
+from docopt import docopt
+import feedparser
+from render import Render
+import sqlite3
+import yaml
+
+class Store:
+    def __init__(self, c):
+        self.__cfg = c
+        self.__c = sqlite3.connect('kci.db')
+        self.__init_tables()
+        self.__c.row_factory = self.__factory
+
+    def __factory(self, cursor, row):
+        d = {}
+        for i, c in enumerate(cursor.description):
+            d[c[0]] = row[i]
+        return d
+
+    def __init_tables(self):
+        structure = ['''
+CREATE TABLE IF NOT EXISTS tests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    lab TEXT NOT NULL,
+    arch TEXT NOT NULL,
+    kci_board TEXT NOT NULL,
+    board TEXT NOT NULL,
+    tree TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    version TEXT NOT NULL,
+    config TEXT NOT NULL,
+    link TEXT NOT NULL,
+    status TEXT NOT NULL,
+    published TEXT NOT NULL
+)
+''',
+]
+        for s in structure:
+            self.__c.execute(s)
+        self.__c.commit()
+
+    def close(self):
+        self.__c.commit()
+        self.__c.close()
+
+    def store_job(self, job, lab):
+        query = '''
+INSERT INTO tests (lab, arch, kci_board, board, tree, branch, version, config, link, status, published)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+'''
+        self.__c.execute(query, (lab, job['arch'], job['kci_board'],
+                                 job['board'], job['tree'], job['branch'],
+                                 job['version'], job['config'], job['link'],
+                                 job['status'], job['published']))
+
+    def get_latest(self, lab):
+        query = '''
+SELECT published FROM tests
+WHERE lab == ?
+ORDER BY published DESC
+LIMIT 1'''
+        try:
+            return self.__c.execute(query, (lab,)).fetchone()['published']
+        except TypeError:
+            return '1970-01-01T00:00:00+00:00'
+
+    def get_status(self, status):
+        query = '''
+SELECT * FROM tests
+WHERE status == ?
+ORDER BY board, tree, branch, version, config
+'''
+        failed = list()
+        for t in self.__c.execute(query, (status,)):
+            failed.append(t)
+        return failed
+
+class Fetcher:
+    def __init__(self, c, s, l):
+        self.__store = s
+        self.__cfg = c[lab]
+        self.__lab = l
+
+    def __parse_test(self, t):
+        title = t['title'].split(' — ')
+        info = title[1].split(' – ')
+        (tree, version, config, arch) = info[1].split(' ')
+
+        kci_board = info[0]
+        board = kci_board.split(':')[0]
+        if board[-7:] == '_rootfs':
+            board = board[:-7]
+
+        branch = next(filter(lambda x: 'Git branch' in x,
+                             t['content'][0]['value'].split('\n'))).split('<dd>')[1][:-5]
+
+        return {
+            'arch':      arch[1:-1],
+            'kci_board': kci_board,
+            'board':     board,
+            'tree':      tree,
+            'branch':    branch,
+            'version':   version,
+            'config':    config,
+            'link':      t['link'],
+            'status':    title[0],
+            'published': t['published'],
+        }
+
+    def handle_feed(self):
+        feed = feedparser.parse(self.__cfg['feed'])
+        since = dateutil.parser.parse(self.__store.get_latest(self.__lab))
+        entries = list(filter(lambda x: dateutil.parser.parse(x['published']) > since,
+                              feed['entries']))
+        for e in entries:
+            self.__store.store_job(self.__parse_test(e), self.__lab)
+
+def parse_config(f):
+    with open(f, 'r') as stream:
+        cfg = yaml.load(stream)
+    return cfg
+
+if __name__ == '__main__':
+    args = docopt(__doc__)
+    cfg = parse_config(args['--conf'])
+    s = Store(cfg)
+
+    if args['fetch']:
+        for lab in cfg:
+            Fetcher(cfg, s, lab).handle_feed()
+    elif args['render']:
+        Render(cfg, s).summary()
+
+    s.close()
