@@ -35,7 +35,8 @@ html { margin: auto; width: 85%; }
     def summary(self):
         table = ''
         t = datetime.now(timezone.utc) - timedelta(days=1)
-        failed = list(filter(lambda x: dateutil.parser.parse(x['published']) > t,
+        failed = list(filter(lambda x: dateutil.parser.parse(x['published']) > t
+                                       and x['tree'] in ['stable','mainline','next'],
                              self.__store.get_status('FAIL')))
         for t in failed:
             tree = "%s/%s" % (t['tree'], t['branch'])
