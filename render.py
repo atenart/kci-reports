@@ -51,7 +51,7 @@ html { margin: auto; width: 85%; }
 
         content = '''<table class="table table-condensed table-hover">
 <thead>
-<tr><th>Baord</th><th>Tree</th><th>Version</th><th>Config</th>
+<tr><th>Board</th><th>Tree</th><th>Version</th><th>Config</th>
 <th>Boot log</th><th>Status</th></tr>
 </thead>
 <tbody>%s</tbody>
